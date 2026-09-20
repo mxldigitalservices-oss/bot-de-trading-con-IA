@@ -10,6 +10,17 @@ def _i(n, d): return int(os.getenv(n, d))
 def _b(n, d="0"): return os.getenv(n, d) == "1"
 
 
+def _load_keys():
+    """Lee GEMINI_KEYS (separadas por coma) y/o GEMINI_KEYS1..GEMINI_KEYS10 (una por variable)."""
+    raw = os.getenv("GEMINI_KEYS", "").split(",")
+    raw += [os.getenv(f"GEMINI_KEYS{i}", "") for i in range(1, 11)]
+    out = []
+    for k in (x.strip() for x in raw):
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
 @dataclass
 class Config:
     symbol: str = os.getenv("SYMBOL", "BTCUSDT").upper()
@@ -33,8 +44,7 @@ class Config:
 
     use_gemini: bool = _b("USE_GEMINI")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    gemini_keys: list = field(default_factory=lambda: [
-        k.strip() for k in os.getenv("GEMINI_KEYS", "").split(",") if k.strip()])
+    gemini_keys: list = field(default_factory=_load_keys)
     gemini_max_per_hour: int = _i("GEMINI_MAX_PER_HOUR", 60)
     gemini_ttl_s: float = 3.0
     gemini_min_conf: float = 0.6
