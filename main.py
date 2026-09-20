@@ -1,5 +1,5 @@
 """Backend: ingesta WebSocket + motor + Gemini opcional + API/WS para el dashboard."""
-import asyncio, json, logging, time
+import asyncio, base64, json, logging, os, secrets, time
 from contextlib import asynccontextmanager
 from statistics import mean
 
@@ -85,6 +85,40 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+class BasicAuth:
+    """Pide usuario/clave (DASHBOARD_USER / DASHBOARD_PASSWORD) a TODO: pagina, API y WebSocket.
+    Imprescindible en Railway: /api/kill no debe quedar abierto a internet."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        pwd = os.getenv("DASHBOARD_PASSWORD")
+        if not pwd or scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        user = os.getenv("DASHBOARD_USER", "admin")
+        h = dict(scope["headers"]).get(b"authorization", b"").decode()
+        ok = False
+        if h.lower().startswith("basic "):
+            try:
+                u, _, p = base64.b64decode(h[6:]).decode().partition(":")
+                ok = (secrets.compare_digest(u.encode(), user.encode())
+                      and secrets.compare_digest(p.encode(), pwd.encode()))
+            except Exception:
+                ok = False
+        if ok:
+            return await self.app(scope, receive, send)
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await send({"type": "http.response.start", "status": 401, "headers": [
+            (b"www-authenticate", b'Basic realm="MXL"'), (b"content-type", b"text/plain; charset=utf-8")]})
+        await send({"type": "http.response.body", "body": "Acceso restringido".encode()})
+
+
+app.add_middleware(BasicAuth)
+
+
 @app.get("/")
 def index():
     return FileResponse("static/index.html")
@@ -152,5 +186,9 @@ async def ws(sock: WebSocket):
 
 
 if __name__ == "__main__":
-    # 127.0.0.1: /api/kill no tiene autenticacion, NO lo expongas a internet.
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8000"))
+    if host != "127.0.0.1" and not os.getenv("DASHBOARD_PASSWORD"):
+        raise SystemExit("Seguridad: define DASHBOARD_PASSWORD antes de exponer el servidor "
+                         "(HOST != 127.0.0.1). /api/kill controla el bot.")
+    uvicorn.run(app, host=host, port=port)
