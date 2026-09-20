@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MXL · Mesa de control</title>
+<style>
+:root{
+  --paper:#eef1f4; --panel:#f8fafb; --ink:#14213a; --dim:#5d6b82; --line:#cdd5e0;
+  --grid:rgba(20,33,58,.045); --cobalt:#2447d6; --gain:#1c7a4c; --loss:#c23a2e; --warn:#a86a00;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0e1626; --panel:#131d31; --ink:#dde6f3; --dim:#8b9ab3; --line:#26334d;
+    --grid:rgba(221,230,243,.04); --cobalt:#7d9bff; --gain:#4fcf8f; --loss:#ff7d6e; --warn:#e6b04a;
+  }
+}
+*{box-sizing:border-box}
+html{height:100%}
+body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font:15px/1.5 var(--sans);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:24px 24px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;justify-content:space-between;
+  padding:16px clamp(16px,4vw,40px);border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font:italic 600 26px/1 var(--serif);letter-spacing:.01em}
+.brand small{font:400 13px var(--sans);font-style:normal;color:var(--dim);margin-left:10px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:13px;background:var(--paper)}
+.pill.ok{color:var(--gain);border-color:var(--gain)}
+.pill.bad{color:var(--loss);border-color:var(--loss)}
+.pill.warn{color:var(--warn);border-color:var(--warn)}
+button{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
+button:hover{background:var(--ink);color:var(--paper)}
+button.danger{border-color:var(--loss);color:var(--loss)}
+button.danger:hover{background:var(--loss);color:var(--paper)}
+main{max-width:1200px;margin:0 auto;padding:24px clamp(16px,4vw,40px) 56px;display:grid;gap:28px}
+
+/* Hero: la pregunta que importa */
+.verdict{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:28px;align-items:start}
+.verdict h1{font:600 clamp(24px,3.4vw,38px)/1.15 var(--serif);margin:0 0 10px;max-width:22ch}
+.verdict p{margin:0;color:var(--dim);max-width:52ch}
+.gauge{margin-top:22px}
+.track{position:relative;height:34px;border:1px solid var(--ink);border-radius:4px;background:var(--panel);overflow:hidden}
+.fill{position:absolute;left:0;top:0;bottom:0;background:var(--cobalt);opacity:.85;transition:width .6s}
+.mark{position:absolute;top:-6px;bottom:-6px;width:0;border-left:2px solid var(--loss)}
+.mark.req{border-left:2px dashed var(--warn)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:22px;font-size:13px;color:var(--dim)}
+.legend i{display:inline-block;width:14px;height:0;border-top:2px solid;vertical-align:middle;margin-right:6px}
+.chartbox{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px}
+.chartbox .row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.price{font:600 28px var(--mono)}
+svg.spark{width:100%;height:130px;display:block}
+
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:28px}
+h2{font:600 18px var(--serif);margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--ink)}
+dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:6px 16px}
+dt{color:var(--dim)} dd{margin:0;text-align:right}
+.imb{position:relative;height:10px;background:var(--line);border-radius:5px;margin:4px 0 12px}
+.imb b{position:absolute;top:0;bottom:0;background:var(--cobalt);border-radius:5px}
+.imb::after{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;border-left:1px solid var(--ink)}
+.gain{color:var(--gain)} .loss{color:var(--loss)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 12px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child,th.l,td.l{text-align:left}
+th{font-weight:600;color:var(--dim);position:sticky;top:0;background:var(--panel)}
+tr:last-child td{border-bottom:0}
+.empty{padding:22px;color:var(--dim);text-align:center}
+.note{font-size:13px;color:var(--dim);margin-top:8px;max-width:70ch}
+@media (max-width:820px){.verdict{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.fill{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">MXL<small id="sym">—</small></div>
+  <div class="pills" role="status" aria-live="polite">
+    <span class="pill" id="pMode">Simulación</span>
+    <span class="pill" id="pFeed">Sin datos</span>
+    <span class="pill" id="pState">—</span>
+    <button id="btnKill" class="danger">Detener operaciones</button>
+    <button id="btnResume" hidden>Reanudar</button>
+  </div>
+</header>
+
+<main>
+  <section class="verdict" aria-labelledby="vTitle">
+    <div>
+      <h1 id="vTitle">Esperando datos del mercado…</h1>
+      <p id="vText">El motor necesita ~60 segundos de precios para calcular la volatilidad.</p>
+      <div class="gauge">
+        <div class="track" id="track" role="img" aria-label="Movimiento esperado frente al costo de operar">
+          <div class="fill" id="gFill" style="width:0"></div>
+          <div class="mark" id="gBe"></div>
+          <div class="mark req" id="gReq"></div>
+        </div>
+        <div class="legend">
+          <span><i style="border-color:var(--cobalt)"></i>Movimiento esperado <b class="num" id="lEdge">—</b></span>
+          <span><i style="border-color:var(--loss)"></i>Costo de empatar <b class="num" id="lBe">—</b></span>
+          <span><i style="border-color:var(--warn);border-top-style:dashed"></i>Mínimo exigido <b class="num" id="lReq">—</b></span>
+        </div>
+      </div>
+    </div>
+    <div class="chartbox">
+      <div class="row"><span class="price" id="mid">—</span><span class="num" id="pnlDay">—</span></div>
+      <svg class="spark" id="spark" viewBox="0 0 300 130" preserveAspectRatio="none" aria-label="Precio de los últimos 5 minutos"></svg>
+      <div class="note">Precio medio, una muestra por segundo, últimos 5 minutos.</div>
+    </div>
+  </section>
+
+  <section class="cols">
+    <div>
+      <h2>Mercado ahora</h2>
+      <div class="note" style="margin:0 0 4px">Presión del libro: compradores ↔ vendedores</div>
+      <div class="imb"><b id="imbBar"></b></div>
+      <dl class="num">
+        <dt>Desbalance</dt><dd id="fImb">—</dd>
+        <dt>Spread</dt><dd id="fSpread">—</dd>
+        <dt>Volatilidad (30 s)</dt><dd id="fVol">—</dd>
+        <dt>Liquidez (5 niveles)</dt><dd id="fDepth">—</dd>
+      </dl>
+    </div>
+    <div>
+      <h2>Cuenta simulada</h2>
+      <dl class="num">
+        <dt>Efectivo</dt><dd id="cCash">—</dd>
+        <dt>Patrimonio</dt><dd id="cEq">—</dd>
+        <dt>Resultado hoy</dt><dd id="cDay">—</dd>
+        <dt>Polvo (no vendible)</dt><dd id="cDust">—</dd>
+        <dt>Operaciones</dt><dd id="cTr">—</dd>
+        <dt>Errores seguidos</dt><dd id="cErr">—</dd>
+      </dl>
+    </div>
+    <div>
+      <h2>Posición</h2>
+      <div id="posEmpty" class="note" style="margin:0">Sin posición abierta.</div>
+      <dl class="num" id="posDl" hidden>
+        <dt>Entrada</dt><dd id="pEntry">—</dd>
+        <dt>Movimiento</dt><dd id="pMove">—</dd>
+        <dt>Objetivo / stop</dt><dd id="pTpSl">—</dd>
+        <dt>Tiempo abierta</dt><dd id="pAge">—</dd>
+        <dt>Prolongada</dt><dd id="pExt">—</dd>
+      </dl>
+      <h2 style="margin-top:22px">Gemini</h2>
+      <dl class="num"><dt>Estado</dt><dd id="gStatus">—</dd>
+        <dt>Llaves libres</dt><dd id="gKeys">—</dd>
+        <dt>Llamadas / hora</dt><dd id="gCalls">—</dd></dl>
+    </div>
+  </section>
+
+  <section>
+    <h2>Matriz de resultados</h2>
+    <div class="tablewrap"><table id="tStats"><tbody></tbody></table></div>
+    <p class="note">Retornos en puntos base después de la señal. “Todas” incluye señales que no se ejecutaron: sirve para saber si el filtro aporta valor o solo reduce la muestra.</p>
+  </section>
+
+  <section>
+    <h2>Últimas señales</h2>
+    <div class="tablewrap"><table id="tSig"></table></div>
+  </section>
+
+  <section>
+    <h2>Operaciones simuladas</h2>
+    <div class="tablewrap"><table id="tTr"></table></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const fx = (v, d = 2) => (v == null || isNaN(v)) ? "—" : Number(v).toFixed(d);
+const sign = v => v > 0 ? "gain" : v < 0 ? "loss" : "";
+const time = ms => new Date(ms).toLocaleTimeString("es", {hour12: false});
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function setPill(el, text, cls) { el.textContent = text; el.className = "pill " + (cls || ""); }
+
+function render(s) {
+  $("sym").textContent = s.symbol;
+  setPill($("pMode"), s.demo ? "Modo demo: filtro de rentabilidad apagado" : "Simulación con libro real", s.demo ? "warn" : "");
+  setPill($("pFeed"), s.feed_ok ? "Datos en vivo" : "Sin datos" + (s.feed_age_s ? ` (${fx(s.feed_age_s, 0)} s)` : ""), s.feed_ok ? "ok" : "bad");
+  setPill($("pState"), s.halted ? "Detenido: " + s.halt_reason : s.state.replaceAll("_", " ").toLowerCase(), s.halted ? "bad" : "");
+  $("btnKill").hidden = s.halted; $("btnResume").hidden = !s.halted;
+
+  const f = s.features;
+  // Hero
+  if (f) {
+    const ok = s.edge_bps > s.required_bps;
+    $("vTitle").textContent = ok ? "El movimiento esperado supera el costo." : "Hoy no compensa operar.";
+    $("vText").textContent = ok
+      ? `Se espera ${fx(s.edge_bps,1)} bps y el mínimo exigido es ${fx(s.required_bps,1)} bps. Si el resto de filtros lo permite, el motor abrirá una posición.`
+      : `Se espera mover ${fx(s.edge_bps,1)} bps, pero solo comisiones y spread cuestan ${fx(s.breakeven_bps,1)} bps. El motor espera.`;
+    const max = Math.max(s.required_bps * 1.25, s.edge_bps * 1.1, 1);
+    $("gFill").style.width = Math.min(100, s.edge_bps / max * 100) + "%";
+    $("gBe").style.left = s.breakeven_bps / max * 100 + "%";
+    $("gReq").style.left = Math.min(100, s.required_bps / max * 100) + "%";
+    $("lEdge").textContent = fx(s.edge_bps, 1) + " bps";
+    $("lBe").textContent = fx(s.breakeven_bps, 1) + " bps";
+    $("lReq").textContent = fx(s.required_bps, 1) + " bps";
+    $("mid").textContent = fx(f.mid, 2);
+    $("fImb").textContent = fx(f.imb, 2);
+    const w = Math.abs(f.imb) * 50;
+    Object.assign($("imbBar").style, {width: w + "%", left: f.imb >= 0 ? "50%" : (50 - w) + "%"});
+    $("fSpread").textContent = fx(f.spread_bps, 2) + " bps";
+    $("fVol").textContent = fx(f.vol_bps_h, 1) + " bps";
+    $("fDepth").textContent = "$" + Math.round(f.depth_usd).toLocaleString("es");
+  }
+  spark(s.mids);
+
+  $("pnlDay").textContent = (s.daily_pnl >= 0 ? "+" : "") + fx(s.daily_pnl, 4) + " USD hoy";
+  $("pnlDay").className = "num " + sign(s.daily_pnl);
+  $("cCash").textContent = "$" + fx(s.cash, 4);
+  $("cEq").textContent = "$" + fx(s.equity, 4);
+  $("cDay").textContent = fx(s.daily_pnl, 4); $("cDay").className = sign(s.daily_pnl);
+  $("cDust").textContent = fx(s.dust_qty, 8);
+  $("cTr").textContent = `${s.stats.trades} (${s.stats.signals} señales)`;
+  $("cErr").textContent = s.errors;
+
+  const p = s.position;
+  $("posEmpty").hidden = !!p; $("posDl").hidden = !p;
+  if (p) {
+    $("pEntry").textContent = fx(p.entry_px, 2);
+    $("pMove").textContent = fx(p.move_bps, 1) + " bps"; $("pMove").className = sign(p.move_bps);
+    $("pTpSl").textContent = `+${fx(p.tp_bps,1)} / −${fx(p.sl_bps,1)} bps`;
+    $("pAge").textContent = fx(p.age_s, 0) + " s";
+    $("pExt").textContent = p.extended ? "Sí" : "No";
+  }
+  const g = s.gemini || {};
+  $("gStatus").textContent = g.enabled ? "Activo (solo veto)" : "Apagado";
+  $("gKeys").textContent = g.enabled ? `${g.disponibles} de ${g.llaves}` : "—";
+  $("gCalls").textContent = g.enabled ? `${g.llamadas_hora} de ${g.tope_hora}` : "—";
+}
+
+function spark(m) {
+  const svg = $("spark");
+  if (!m || m.length < 2) { svg.innerHTML = ""; return; }
+  const lo = Math.min(...m), hi = Math.max(...m), r = (hi - lo) || 1;
+  const pts = m.map((v, i) => `${(i / (m.length - 1) * 300).toFixed(1)},${(120 - (v - lo) / r * 110).toFixed(1)}`).join(" ");
+  svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="var(--cobalt)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`;
+}
+
+function table(el, cols, rows, emptyMsg) {
+  if (!rows.length) { el.innerHTML = `<tr><td class="empty">${emptyMsg}</td></tr>`; return; }
+  el.innerHTML = "<thead><tr>" + cols.map(c => `<th class="${c.l ? "l" : ""}">${c.h}</th>`).join("") + "</tr></thead><tbody>" +
+    rows.map(r => "<tr>" + cols.map(c => { const v = c.f(r); return `<td class="num ${c.l ? "l" : ""} ${c.cls ? c.cls(r) : ""}">${v}</td>`; }).join("") + "</tr>").join("") + "</tbody>";
+}
+
+async function refresh() {
+  try {
+    const [sg, tr, st] = await Promise.all(["/api/signals", "/api/trades", "/api/stats"].map(u => fetch(u).then(r => r.json())));
+    table($("tSig"), [
+      {h: "Hora", l: 1, f: r => time(r.ts)}, {h: "Precio", f: r => fx(r.mid, 2)},
+      {h: "Desbalance", f: r => fx(r.imb, 2)}, {h: "Edge", f: r => fx(r.edge_bps, 1)},
+      {h: "Costo", f: r => fx(r.breakeven_bps, 1)}, {h: "Decisión", l: 1, f: r => esc(r.decision)},
+      {h: "Gemini", l: 1, f: r => esc(r.veredicto || "—")},
+      {h: "+5 s", f: r => fx(r.ret_5s, 1), cls: r => sign(r.ret_5s)},
+      {h: "+30 s", f: r => fx(r.ret_30s, 1), cls: r => sign(r.ret_30s)},
+      {h: "+120 s", f: r => fx(r.ret_120s, 1), cls: r => sign(r.ret_120s)},
+    ], sg, "Aún no hay señales. El motor solo registra cuando el libro presiona al alza.");
+    table($("tTr"), [
+      {h: "Entrada", l: 1, f: r => time(r.ts_entry)}, {h: "Salida", l: 1, f: r => time(r.ts_exit)},
+      {h: "Precio in", f: r => fx(r.entry_px, 2)}, {h: "Precio out", f: r => fx(r.exit_px, 2)},
+      {h: "Resultado USD", f: r => fx(r.pnl_usd, 4), cls: r => sign(r.pnl_usd)},
+      {h: "Resultado bps", f: r => fx(r.pnl_bps, 1), cls: r => sign(r.pnl_bps)},
+      {h: "Slippage in", f: r => fx(r.slip_entry_bps, 2)}, {h: "Motivo", l: 1, f: r => esc(r.reason)},
+    ], tr, "Sin operaciones simuladas todavía.");
+    const row = (n, o) => `<tr><td class="l">${n}</td><td>${fx(o.ret_5s)}</td><td>${fx(o.ret_30s)}</td><td>${fx(o.ret_120s)}</td></tr>`;
+    $("tStats").innerHTML = `<thead><tr><th class="l">Grupo</th><th>+5 s</th><th>+30 s</th><th>+120 s</th></tr></thead><tbody>` +
+      row(`Todas las señales (${st.senales_etiquetadas})`, st.todas) +
+      row(`Solo viables (${st.senales_viables})`, st.viables) +
+      `<tr><td class="l">Viables, neto de costos a 30 s</td><td colspan="3" class="${sign(st.viables_neto_30s_bps)}">${fx(st.viables_neto_30s_bps)} bps</td></tr>` +
+      `<tr><td class="l">Acierto direccional a 30 s</td><td colspan="3">${st.acierto_30s == null ? "—" : Math.round(st.acierto_30s * 100) + "%"}</td></tr>` +
+      `<tr><td class="l">Operaciones (ganadoras)</td><td colspan="3">${st.trades} (${st.ganadores})</td></tr>` +
+      `<tr><td class="l">Resultado acumulado</td><td colspan="3" class="${sign(st.pnl_usd)}">${fx(st.pnl_usd, 4)} USD</td></tr></tbody>`;
+  } catch (e) { /* el backend puede estar reiniciando */ }
+}
+
+let sock;
+function connect() {
+  sock = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  sock.onmessage = e => render(JSON.parse(e.data));
+  sock.onclose = () => setTimeout(connect, 2000);
+}
+$("btnKill").onclick = () => fetch("/api/kill", {method: "POST"});
+$("btnResume").onclick = () => fetch("/api/resume", {method: "POST"});
+connect(); refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
