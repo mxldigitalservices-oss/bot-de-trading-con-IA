@@ -39,6 +39,18 @@ button{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--in
 button:hover{background:var(--ink);color:var(--paper)}
 button.danger{border-color:var(--loss);color:var(--loss)}
 button.danger:hover{background:var(--loss);color:var(--paper)}
+button.primary{border-color:var(--cobalt);background:var(--cobalt);color:var(--paper)}
+button.primary:hover{background:var(--cobalt);color:var(--paper);filter:brightness(1.12)}
+button:disabled{opacity:.55;cursor:progress}
+button:disabled:hover{background:transparent;color:inherit}
+button.primary:disabled:hover{background:var(--cobalt);color:var(--paper)}
+button.danger:disabled:hover{color:var(--loss)}
+.banner{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;padding:12px clamp(16px,4vw,40px);
+  border-bottom:1px solid var(--loss);background:color-mix(in srgb,var(--loss) 12%,var(--panel))}
+.banner[hidden],.toast[hidden]{display:none}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:min(92vw,520px);padding:10px 16px;
+  border-radius:6px;background:var(--ink);color:var(--paper);font-size:14px;z-index:10;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+.toast.err{background:var(--loss);color:#fff}
 main{max-width:1200px;margin:0 auto;padding:24px clamp(16px,4vw,40px) 56px;display:grid;gap:28px}
 
 /* Hero: la pregunta que importa */
@@ -81,13 +93,19 @@ tr:last-child td{border-bottom:0}
 <header>
   <div class="brand">MXL<small id="sym">—</small></div>
   <div class="pills" role="status" aria-live="polite">
+    <span class="pill" id="pLink">Conectando…</span>
     <span class="pill" id="pMode">Simulación</span>
     <span class="pill" id="pFeed">Sin datos</span>
     <span class="pill" id="pState">—</span>
-    <button id="btnKill" class="danger">Detener operaciones</button>
-    <button id="btnResume" hidden>Reanudar</button>
+    <button id="btnKill" class="danger" type="button">Detener operaciones</button>
+    <button id="btnResume" class="primary" type="button" hidden>Reanudar</button>
   </div>
 </header>
+<div class="banner" id="banner" role="alert" hidden>
+  <strong id="banTitle">Operaciones detenidas</strong>
+  <span id="banText"></span>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <main>
   <section class="verdict" aria-labelledby="vTitle">
@@ -180,12 +198,63 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 
 function setPill(el, text, cls) { el.textContent = text; el.className = "pill " + (cls || ""); }
 
+const HALT = {manual: "Detenido manualmente", perdida_diaria: "Límite de pérdida diaria alcanzado",
+              errores_consecutivos: "Demasiados errores seguidos"};
+let lastTs = 0, busy = false, toastT, poll = null;
+
+function applyControl(s) {
+  setPill($("pState"), s.halted ? "Detenido" : s.state.replaceAll("_", " ").toLowerCase(), s.halted ? "bad" : "");
+  $("btnKill").hidden = s.halted;
+  $("btnResume").hidden = !s.halted;
+  $("banner").hidden = !s.halted;
+  if (s.halted) {
+    $("banTitle").textContent = HALT[s.halt_reason] || ("Detenido: " + s.halt_reason);
+    $("banText").textContent = ["IN_POSITION", "EXIT_PENDING"].includes(s.state)
+      ? "Cerrando la posición abierta; no se abrirán posiciones nuevas."
+      : "No se abrirán posiciones nuevas. Los datos del mercado se siguen grabando.";
+  }
+}
+
+function toast(msg, err) {
+  const t = $("toast");
+  t.textContent = msg; t.className = "toast" + (err ? " err" : ""); t.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 4500);
+}
+
+function setBusy(b) {
+  busy = b;
+  const k = $("btnKill"), r = $("btnResume");
+  k.disabled = r.disabled = b;
+  k.textContent = b ? "Deteniendo…" : "Detener operaciones";
+  r.textContent = b ? "Reanudando…" : "Reanudar";
+}
+
+async function control(action) {
+  if (busy) return;
+  if (action === "resume" && !confirm("¿Reanudar? El bot volverá a abrir posiciones simuladas.")) return;
+  setBusy(true);
+  try {
+    const r = await fetch("/api/" + action, {method: "POST", headers: {"Accept": "application/json"}});
+    if (r.status === 401) throw new Error("Sesión expirada: recarga la página e ingresa tu clave.");
+    const d = await r.json().catch(() => ({}));
+    if (d.status) render(d.status);               // efecto inmediato: no espera al WebSocket
+    if (!r.ok || d.ok === false) throw new Error(d.error || ("Error " + r.status));
+    toast(action === "kill" ? "Operaciones detenidas." : "Operaciones reanudadas.");
+  } catch (e) {
+    const sinRed = e instanceof TypeError || e?.name === "TypeError";
+    toast(sinRed ? "No se pudo contactar con el servidor." : e.message, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function render(s) {
+  if (s.ts < lastTs) return;                      // snapshot viejo que llegó tarde: se ignora
+  lastTs = s.ts;
   $("sym").textContent = s.symbol;
   setPill($("pMode"), s.demo ? "Modo demo: filtro de rentabilidad apagado" : "Simulación con libro real", s.demo ? "warn" : "");
   setPill($("pFeed"), s.feed_ok ? "Datos en vivo" : "Sin datos" + (s.feed_age_s ? ` (${fx(s.feed_age_s, 0)} s)` : ""), s.feed_ok ? "ok" : "bad");
-  setPill($("pState"), s.halted ? "Detenido: " + s.halt_reason : s.state.replaceAll("_", " ").toLowerCase(), s.halted ? "bad" : "");
-  $("btnKill").hidden = s.halted; $("btnResume").hidden = !s.halted;
+  applyControl(s);
 
   const f = s.features;
   // Hero
@@ -281,13 +350,22 @@ async function refresh() {
 }
 
 let sock;
+function startPoll() {
+  if (poll) return;
+  poll = setInterval(async () => {
+    try { render(await (await fetch("/api/status")).json()); } catch (e) { /* sin red */ }
+  }, 2000);
+}
+function stopPoll() { clearInterval(poll); poll = null; }
+
 function connect() {
   sock = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  sock.onopen = () => { setPill($("pLink"), "Panel en vivo", "ok"); stopPoll(); };
   sock.onmessage = e => render(JSON.parse(e.data));
-  sock.onclose = () => setTimeout(connect, 2000);
+  sock.onclose = () => { setPill($("pLink"), "Reconectando…", "warn"); startPoll(); setTimeout(connect, 2000); };
 }
-$("btnKill").onclick = () => fetch("/api/kill", {method: "POST"});
-$("btnResume").onclick = () => fetch("/api/resume", {method: "POST"});
+$("btnKill").addEventListener("click", () => control("kill"));
+$("btnResume").addEventListener("click", () => control("resume"));
 connect(); refresh(); setInterval(refresh, 5000);
 </script>
 </body>

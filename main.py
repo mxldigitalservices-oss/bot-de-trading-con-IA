@@ -4,19 +4,20 @@ from contextlib import asynccontextmanager
 from statistics import mean
 
 import uvicorn, websockets
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import Config
 from db import DB
-from engine import Engine
+from engine import Engine, St
 from exchange import fetch_filters
 from gemini import RotadorLlaves, estratega
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mxl")
 ctx = {}
+clients = set()          # una cola por navegador conectado al WebSocket
 
 
 async def ingesta(cfg, engine, db):
@@ -119,28 +120,67 @@ class BasicAuth:
 app.add_middleware(BasicAuth)
 
 
+# ---------------------------------------------------------------------------
+# Estado y control en tiempo real.
+# IMPORTANTE: todo es `async def` => corre en el hilo del event loop, el mismo que procesa el
+# libro de ordenes. Con `def` normal FastAPI usaria un hilo aparte y kill() modificaria el
+# motor a la vez que on_book(): condicion de carrera.
+# ---------------------------------------------------------------------------
+def snapshot():
+    st = ctx["engine"].status()
+    st["last_action"] = ctx.get("last_action")
+    return st
+
+
+def push_now():
+    """Empuja el estado a TODOS los navegadores conectados, sin esperar al ciclo de 1 s."""
+    snap = snapshot()
+    for q in list(clients):
+        try:
+            q.put_nowait(snap)
+        except asyncio.QueueFull:
+            pass
+
+
+def _cancel_pending_entry(engine):
+    """Al detener, una compra aun no ejecutada se cancela (evita abrir y cerrar pagando comisiones)."""
+    p = engine.pending
+    if p and p["kind"] == "buy":
+        engine.pending = None
+        engine.state = St.IDLE
+        engine.db.update_signal(p["sid"], decision="cancelada_por_kill")
+    elif engine.state == St.AWAITING_LLM:
+        engine.state = St.IDLE
+
+
+def _record(action, request):
+    who = request.client.host if request.client else "?"
+    ctx["last_action"] = {"action": action, "at": time.time(), "by": who}
+    log.warning("CONTROL %s desde %s", action, who)
+
+
 @app.get("/")
-def index():
+async def index():
     return FileResponse("static/index.html")
 
 
 @app.get("/api/status")
-def status():
-    return ctx["engine"].status()
+async def status():
+    return snapshot()
 
 
 @app.get("/api/signals")
-def signals(limit: int = 40):
+async def signals(limit: int = 40):
     return ctx["db"].rows("SELECT * FROM signals ORDER BY id DESC LIMIT ?", (limit,))
 
 
 @app.get("/api/trades")
-def trades(limit: int = 40):
+async def trades(limit: int = 40):
     return ctx["db"].rows("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
 
 
 @app.get("/api/stats")
-def stats():
+async def stats():
     """La matriz: que tan bien predijo el filtro, con o sin ejecucion (contrafactual)."""
     rows = ctx["db"].rows("SELECT * FROM signals WHERE ret_120s IS NOT NULL")
     tr = ctx["db"].rows("SELECT pnl_usd, pnl_bps FROM trades")
@@ -163,26 +203,48 @@ def stats():
 
 
 @app.post("/api/kill")
-def kill():
-    ctx["engine"].kill("manual")
-    return {"ok": True}
+async def kill(request: Request):
+    """Detiene: no abre posiciones nuevas, cancela entradas en curso y cierra la posicion abierta."""
+    eng = ctx["engine"]
+    if not eng.halted:
+        eng.kill("manual")
+    _cancel_pending_entry(eng)
+    _record("kill", request)
+    push_now()
+    return {"ok": True, "status": snapshot()}
 
 
 @app.post("/api/resume")
-def resume():
-    ctx["engine"].resume()
-    return {"ok": True}
+async def resume(request: Request):
+    eng, cfg = ctx["engine"], ctx["cfg"]
+    if eng.halt_reason == "perdida_diaria" and eng.daily_pnl <= -cfg.max_daily_loss_usd:
+        return JSONResponse(status_code=409, content={
+            "ok": False,
+            "error": "Se alcanzo el limite de perdida diaria. Se reanuda solo al cambiar el dia (UTC).",
+            "status": snapshot()})
+    eng.resume()
+    _record("resume", request)
+    push_now()
+    return {"ok": True, "status": snapshot()}
 
 
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     await sock.accept()
+    q = asyncio.Queue(maxsize=4)
+    clients.add(q)
     try:
+        await sock.send_json(snapshot())
         while True:
-            await sock.send_json(ctx["engine"].status())
-            await asyncio.sleep(1)
+            try:
+                snap = await asyncio.wait_for(q.get(), timeout=1.0)   # cambio de control: al instante
+            except asyncio.TimeoutError:
+                snap = snapshot()                                     # latido normal cada 1 s
+            await sock.send_json(snap)
     except (WebSocketDisconnect, RuntimeError):
         pass
+    finally:
+        clients.discard(q)
 
 
 if __name__ == "__main__":
